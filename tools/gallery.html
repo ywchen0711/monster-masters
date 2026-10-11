@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Monster gallery</title>
+<style>body{background:#1a1d2e;color:#fff;font:12px sans-serif;margin:8px}#g{display:grid;grid-template-columns:repeat(15,1fr);gap:2px}div{text-align:center}canvas{width:100%;image-rendering:pixelated;background:#262a40}</style>
+<div id="g"></div>
+<script type="module">
+import { SPECIES } from '../js/data.js?v=1';
+import { sprite } from '../js/art.js?v=1';
+const q = new URLSearchParams(location.search), v = +(q.get('v') || 0), only = q.get('sp');
+const g = document.getElementById('g');
+if (only) { g.style.gridTemplateColumns = 'repeat(5,1fr)'; for (let k = 0; k < 5; k++) { const d = document.createElement('div'); d.appendChild(sprite(+only, k, { scale: 4 })); g.appendChild(d); } }
+else for (const s of SPECIES) { const d = document.createElement('div'); d.appendChild(sprite(s.id, v, { scale: 2 })); d.append(s.name.en); g.appendChild(d); }
+</script>
