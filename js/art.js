@@ -1,193 +1,261 @@
-// Procedural pixel-art monsters: a 40x40 grid built from simple shapes per body plan, decorated per type, outlined and shaded.
-// Each species has its own seed (shape details) and 4 colour variants + a hidden rainbow one.
-import { SPECIES, TYPE_INFO, rng } from './data.js?v=1';
+// Procedural pixel monsters in a friendly Dragon-Quest-like style: front-facing, chunky, big glossy eyes, wide smiles,
+// bold outlines and 4-tone shading. A 56x56 grid of part keys is built from shapes per body plan, decorated per type,
+// varied per species (eyes, mouth, size, extras), then outlined and shaded. 4 colour variants + a hidden rainbow one.
+import { SPECIES, TYPE_INFO, rng } from './data.js?v=2';
 
-const N = 40;
+const N = 56, CX = 27.5;
 const cache = new Map();
 
+// ------------------------------------------------------------------ raster helpers (keys: M main, S belly, A accent, H horn, W wing,
+// K dark line, E eye white, P pupil, G gloss, R mouth, T tongue, Y teeth, C crown)
 function grid() { return Array.from({ length: N }, () => new Array(N).fill(null)); }
-function put(g, x, y, c) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < N && y < N) g[y][x] = c; }
-function ell(g, cx, cy, rx, ry, c) { for (let y = Math.floor(cy - ry); y <= cy + ry; y++) for (let x = Math.floor(cx - rx); x <= cx + rx; x++) if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) put(g, x, y, c); }
-function rect(g, x0, y0, x1, y1, c) { for (let y = Math.round(y0); y <= y1; y++) for (let x = Math.round(x0); x <= x1; x++) put(g, x, y, c); }
-function tri(g, ax, ay, bx, by, cx, cy, c) {
-  const minX = Math.floor(Math.min(ax, bx, cx)), maxX = Math.ceil(Math.max(ax, bx, cx)), minY = Math.floor(Math.min(ay, by, cy)), maxY = Math.ceil(Math.max(ay, by, cy));
-  const s = (px, py, x1, y1, x2, y2) => (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2);
-  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
-    const d1 = s(x, y, ax, ay, bx, by), d2 = s(x, y, bx, by, cx, cy), d3 = s(x, y, cx, cy, ax, ay);
-    if (!((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))) put(g, x, y, c);
+function put(g, x, y, c, only) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < N && y < N && (!only || only.includes(g[y][x]))) g[y][x] = c; }
+function ell(g, cx, cy, rx, ry, c, only) { for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) put(g, x, y, c, only); }
+function poly(g, pts, c, only) {
+  const ys = pts.map((p) => p[1]), y0 = Math.floor(Math.min(...ys)), y1 = Math.ceil(Math.max(...ys));
+  for (let y = y0; y <= y1; y++) {
+    const xs = [];
+    for (let i = 0; i < pts.length; i++) { const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length]; if ((ay <= y + 0.5 && by > y + 0.5) || (by <= y + 0.5 && ay > y + 0.5)) xs.push(ax + ((y + 0.5 - ay) / (by - ay)) * (bx - ax)); }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) for (let x = Math.ceil(xs[k] - 0.5); x <= Math.floor(xs[k + 1] - 0.5); x++) put(g, x, y, c, only);
   }
 }
-function line(g, x0, y0, x1, y1, w, c) { const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0)) + 1; for (let i = 0; i <= n; i++) { const t = i / n; ell(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, w / 2, w / 2, c); } }
-function eye(g, x, y, style, big) {
-  if (style === 'angry') { rect(g, x - 1, y, x + 1, y + 1, 'E'); put(g, x, y + 1, 'P'); put(g, x - 1, y - 1, 'K'); put(g, x + 1, y - 2, 'K'); return; }
-  if (style === 'sleepy') { rect(g, x - 1, y + 1, x + 1, y + 1, 'K'); return; }
-  if (big) { rect(g, x - 1, y - 1, x + 1, y + 1, 'E'); rect(g, x - 1, y, x, y + 1, 'P'); put(g, x - 1, y - 1, 'W'); return; }
-  rect(g, x, y, x + 1, y + 1, 'E'); put(g, x, y + 1, 'P');
+function line(g, x0, y0, x1, y1, w, c) { const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) + 1; for (let i = 0; i <= n; i++) { const t = i / n; ell(g, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, w / 2, w / 2, c); } }
+const mx = (x) => 2 * CX - x;                                     // mirror an x coordinate
+function sym(fn) { fn(1, (x) => x); fn(-1, mx); }                 // draw something and its mirror image
+const mpts = (pts) => pts.map(([x, y]) => [mx(x), y]);
+
+// big glossy eye (DQ style). style: round | lid | angry | dot
+function eye(g, x, y, s, style, side) {
+  if (style === 'dot') { ell(g, x, y, 1.6 * s, 2.2 * s, 'P'); put(g, x - side * 0.5, y - 1, 'G'); return; }
+  ell(g, x, y, 3.2 * s, 4 * s, 'E');
+  ell(g, x + side * 0.6, y + 0.8 * s, 1.9 * s, 2.6 * s, 'P');
+  ell(g, x + side * 0.1, y - 0.3 * s, 0.8, 0.9, 'G');
+  if (style === 'lid') for (let yy = Math.floor(y - 4 * s); yy <= y - 1.2 * s; yy++) for (let xx = Math.floor(x - 4 * s); xx <= x + 4 * s; xx++) if (g[yy] && (g[yy][xx] === 'E' || g[yy][xx] === 'P' || g[yy][xx] === 'G')) g[yy][xx] = 'M';
+  if (style === 'angry') line(g, x - side * 3.4 * s, y - 5.4 * s, x + side * 2.6 * s, y - 3.2 * s, 1.4, 'K');
+}
+// wide DQ smile: an open mouth with a tongue (or a fanged grin)
+function mouth(g, cx, y, w, h, style) {
+  if (style === 'line') { for (let x = -w; x <= w; x++) put(g, cx + x, y + Math.round((x / w) ** 2 * -2 + 2), 'K'); return; }
+  for (let x = Math.floor(cx - w); x <= Math.ceil(cx + w); x++) {
+    const u = (x - cx) / w; if (Math.abs(u) > 1) continue;
+    const top = y + (1 - u * u) * h * 0.18, bot = y + (1 - u * u) * h;
+    for (let yy = Math.round(top); yy <= Math.round(bot); yy++) put(g, x, yy, 'R');
+  }
+  if (style !== 'grin') ell(g, cx + 0.5, y + h * 0.78, w * 0.48, h * 0.32, 'T', ['R']);
+  if (style === 'fang' || style === 'grin') sym((d, X) => poly(g, [[X(cx - w * 0.62), y + 0.2], [X(cx - w * 0.38), y + 0.2], [X(cx - w * 0.5), y + h * 0.5]], 'Y', ['R', 'M', 'S', null]));
+  if (style === 'grin') for (let x = Math.ceil(cx - w * 0.7); x <= cx + w * 0.7; x += 2) put(g, x, y + h * 0.35, 'Y', ['R']);
 }
 
-// ------------------------------------------------------------------ body plans (all face left); return anchor points for decorations
+// ------------------------------------------------------------------ body plans (front view). return anchors: top, eyes y, mouth y, back
 const BODY = {
-  slime(g, r) {
-    const rx = 12 + r() * 3, ry = 10 + r() * 2, cy = 26;
-    ell(g, 20, cy, rx, ry, 'M'); rect(g, 6, 33, 34, 39, null);
-    for (let x = 0; x < N; x++) for (let y = 33; y < N; y++) g[y][x] = null;
-    tri(g, 18, cy - ry - 5, 23, cy - ry + 2, 15, cy - ry + 2, 'M');
-    ell(g, 21, 29, rx * 0.55, 3, 'S');
-    const st = r() < 0.2 ? 'angry' : 'round';
-    eye(g, 15, 22, st, true); eye(g, 23, 22, st, true);
-    rect(g, 17, 28, 20, 28, 'K');
-    return { head: [19, cy - ry - 2], back: [28, cy - ry + 3], tail: [31, 28], face: [15, 22] };
+  slime(g, r, f) {
+    const s = 0.92 + r() * 0.16, rx = 19 * s, ry = 14 * s, cy = 39;
+    ell(g, CX, cy, rx, ry, 'M');
+    poly(g, [[CX - 13 * s, cy - 6], [CX - 3, cy - 26 * s], [CX + 1, cy - 28 * s], [CX + 13 * s, cy - 6]], 'M');
+    ell(g, CX - 1, cy - 9, 11 * s, 9, 'M');
+    for (let y = 52; y < N; y++) for (let x = 0; x < N; x++) g[y][x] = null;
+    if (f.curl) { line(g, CX + 1, cy - 27 * s, CX + 5, cy - 29 * s, 2.4, 'M'); line(g, CX + 5, cy - 29 * s, CX + 6, cy - 26 * s, 2, 'M'); }
+    const ey = cy - 3;
+    sym((d, X) => eye(g, X(CX - 7 * s), ey, 1.05, f.eyes, d));
+    mouth(g, CX, ey + 6, 8 * s, 6, f.mouth);
+    ell(g, CX - 10 * s, cy - 10, 2.6, 4, 'G', ['M']); put(g, CX - 7 * s, cy - 15, 'G', ['M']);
+    return { top: [CX, cy - 28 * s], eyeY: ey, back: [CX + 12, cy - 10], hand: [CX + rx - 2, cy + 4], s };
   },
-  bug(g, r) {
-    ell(g, 27, 26, 8 + r() * 2, 6, 'M'); ell(g, 17, 25, 5, 5, 'M'); ell(g, 10, 22, 5, 5, 'M');
-    for (const x of [14, 18, 22]) { line(g, x, 28, x - 2, 35, 1.4, 'K'); }
-    if (r() < 0.6) ell(g, 24, 17, 8, 4, 'S');
-    for (let i = 0; i < 3; i++) rect(g, 23 + i * 3, 23, 23 + i * 3, 29, 'D');
-    tri(g, 5, 24, 8, 25, 6, 27, 'K');
-    eye(g, 8, 20, r() < 0.5 ? 'angry' : 'round');
-    return { head: [10, 17], back: [27, 20], tail: [35, 27], face: [8, 20] };
+  bug(g, r, f) {
+    // armoured beetle: shell body, big head with mandibles, six stubby legs
+    sym((d, X) => { for (const [y, len] of [[40, 8], [45, 9], [49, 7]]) line(g, X(CX - 12), y, X(CX - 12 - len), y + 3, 2.2, 'K'); });
+    ell(g, CX, 41, 15, 11, 'M'); for (let y = 31; y <= 51; y++) put(g, CX, y, 'K', ['M']); put(g, CX + 1, 33, 'K', ['M']);
+    sym((d, X) => ell(g, X(CX - 7), 38, 3, 2, 'S', ['M']));
+    ell(g, CX, 24, 12, 10, 'M'); ell(g, CX, 27, 8, 5, 'S');
+    sym((d, X) => { poly(g, [[X(CX - 6), 31], [X(CX - 11), 36], [X(CX - 6), 39], [X(CX - 3), 34]], 'H'); });
+    sym((d, X) => { line(g, X(CX - 5), 15, X(CX - 9), 6, 1.4, 'K'); ell(g, X(CX - 9.5), 5.5, 1.6, 1.6, 'A'); });
+    sym((d, X) => eye(g, X(CX - 6), 22, 1.05, f.eyes === 'dot' ? 'round' : f.eyes, d));
+    mouth(g, CX, 28, 3.5, 3, 'line');
+    return { top: [CX, 13], eyeY: 22, back: [CX + 10, 33], hand: [CX + 13, 44], s: 1 };
   },
-  bird(g, r) {
-    ell(g, 21, 24, 9, 8, 'M'); ell(g, 13, 15, 6, 6, 'M'); ell(g, 21, 27, 6, 4, 'S');
-    tri(g, 7, 14, 1, 16, 7, 18, 'A');
-    ell(g, 24, 21, 8, 5, 'S'); tri(g, 28, 18, 38, 14 + r() * 4, 30, 24, 'S');
-    tri(g, 29, 26, 38, 30, 29, 30, 'M');
-    line(g, 18, 31, 17, 36, 1.2, 'A'); line(g, 23, 31, 23, 36, 1.2, 'A');
-    eye(g, 11, 13, r() < 0.4 ? 'angry' : 'round');
-    return { head: [14, 9], back: [24, 16], tail: [36, 28], face: [11, 13] };
+  bird(g, r, f) {
+    // chubby round bird with spread wings
+    sym((d, X) => poly(g, [[X(CX - 12), 26], [X(CX - 27), 20], [X(CX - 25), 27], [X(CX - 27), 31], [X(CX - 23), 33], [X(CX - 24), 37], [X(CX - 13), 38]], 'W'));
+    sym((d, X) => { for (const y of [27, 32]) line(g, X(CX - 15), y + 2, X(CX - 23), y, 1, 'K'); });
+    ell(g, CX, 34, 15, 14, 'M'); ell(g, CX, 39, 9, 8, 'S');
+    sym((d, X) => poly(g, [[X(CX - 4), 47], [X(CX - 7), 53], [X(CX - 2), 53]], 'A'));
+    sym((d, X) => poly(g, [[X(CX - 2), 21], [X(CX - 6), 13], [X(CX + 1), 19]], 'M'));
+    poly(g, [[CX - 0.5, 22], [CX + 4, 15], [CX + 3, 22]], 'M');
+    sym((d, X) => eye(g, X(CX - 6), 30, 1.0, f.eyes, d));
+    poly(g, [[CX - 4, 34], [CX + 4, 34], [CX, 39]], 'A'); for (let x = -3; x <= 3; x++) put(g, CX + x, 35, 'K', ['A']);
+    return { top: [CX, 14], eyeY: 30, back: [CX + 11, 24], hand: [CX + 22, 30], s: 1 };
   },
-  beast(g, r) {
-    const big = r() * 2;
-    ell(g, 22, 25, 10 + big, 6 + big / 2, 'M'); ell(g, 11, 19, 6, 6, 'M'); ell(g, 6, 21, 3, 2, 'S');
-    tri(g, 8, 15, 10, 8, 13, 14, 'M'); tri(g, 13, 14, 16, 8, 17, 15, 'M');
-    for (const x of [14, 18, 26, 30]) rect(g, x, 29, x + 2, 36, 'M');
-    ell(g, 22, 28, 7, 2, 'S');
-    line(g, 32, 24, 37, 16 + r() * 4, 2, 'M');
-    eye(g, 9, 18, r() < 0.5 ? 'angry' : 'round');
-    put(g, 4, 21, 'K');
-    return { head: [12, 12], back: [22, 18], tail: [37, 17], face: [9, 18] };
+  beast(g, r, f) {
+    // big-headed cub: ears, muzzle with fangs, round body and paws, a curly tail
+    line(g, CX + 10, 46, CX + 20, 38, 3.6, 'M'); ell(g, CX + 21, 35, 3.4, 3.4, 'S');
+    ell(g, CX, 44, 12, 9, 'M'); ell(g, CX, 46, 7, 6, 'S');
+    sym((d, X) => { ell(g, X(CX - 8), 51, 4.4, 3, 'M'); for (const o of [-1.5, 0, 1.5]) put(g, X(CX - 8 + o), 53, 'K', ['M']); });
+    sym((d, X) => { poly(g, [[X(CX - 13), 21], [X(CX - 14), 6], [X(CX - 5), 13]], 'M'); poly(g, [[X(CX - 12), 18], [X(CX - 12.5), 9.5], [X(CX - 7), 14]], 'S'); });
+    ell(g, CX, 24, 14, 12, 'M'); if (f.mane) sym((d, X) => { for (const [y, o] of [[18, 0], [25, 1], [32, 0]]) ell(g, X(CX - 14 - o), y, 3, 3.6, 'A', [null]); });
+    ell(g, CX, 30, 7, 5, 'S'); ell(g, CX, 27, 2.4, 1.6, 'K');
+    sym((d, X) => eye(g, X(CX - 7), 22, 1.0, f.eyes, d));
+    mouth(g, CX, 31, 4, 3.4, f.mouth === 'smile' ? 'fang' : f.mouth);
+    return { top: [CX, 9], eyeY: 22, back: [CX + 10, 14], hand: [CX + 20, 36], s: 1 };
   },
-  fish(g, r) {
-    ell(g, 19, 21, 12, 7 + r() * 2, 'M'); ell(g, 18, 24, 8, 3, 'S');
-    tri(g, 30, 21, 38, 13, 38, 29, 'M');
-    tri(g, 14, 15, 22, 9, 24, 16, 'S'); tri(g, 18, 27, 23, 32, 25, 27, 'S');
-    eye(g, 11, 19, r() < 0.3 ? 'angry' : 'round', true);
-    rect(g, 7, 23, 8, 23, 'K');
-    for (let i = 0; i < 3; i++) put(g, 22 + i * 3, 19, 'D');
-    return { head: [16, 13], back: [21, 14], tail: [37, 21], face: [11, 19] };
+  fish(g, r, f) {
+    // round puffer fish with fins and big lips, a tail peeking out
+    poly(g, [[CX + 12, 34], [CX + 25, 25], [CX + 23, 34], [CX + 25, 43]], 'W');
+    sym((d, X) => poly(g, [[X(CX - 14), 34], [X(CX - 24), 38], [X(CX - 22), 44], [X(CX - 13), 41]], 'W'));
+    poly(g, [[CX - 8, 20], [CX - 2, 9], [CX + 5, 10], [CX + 9, 21]], 'W');
+    ell(g, CX, 33, 16, 15, 'M'); ell(g, CX, 40, 10, 7, 'S');
+    if (f.spikes) for (let a = 0; a < 7; a++) { const ang = -Math.PI * 0.95 + a * 0.32; put(g, CX + Math.cos(ang) * 17, 33 + Math.sin(ang) * 16, 'H'); }
+    sym((d, X) => eye(g, X(CX - 7), 29, 1.15, f.eyes === 'dot' ? 'round' : f.eyes, d));
+    ell(g, CX, 39, 4.6, 3.4, 'A'); ell(g, CX, 39, 2.4, 1.4, 'R');
+    ell(g, CX - 8, 23, 2.4, 1.6, 'G', ['M']);
+    return { top: [CX, 10], eyeY: 29, back: [CX + 2, 14], hand: [CX + 20, 40], s: 1 };
   },
-  plant(g, r) {
-    ell(g, 20, 29, 9, 7, 'M'); ell(g, 20, 31, 6, 3, 'S');
-    const petals = 5 + Math.floor(r() * 3);
-    for (let i = 0; i < petals; i++) { const a = (i / petals) * Math.PI * 2; ell(g, 20 + Math.cos(a) * 7, 15 + Math.sin(a) * 7, 4, 4, 'S'); }
-    ell(g, 20, 15, 6, 6, 'A');
-    tri(g, 11, 27, 3, 22, 9, 31, 'M'); tri(g, 29, 27, 37, 22, 31, 31, 'M');
-    eye(g, 17, 14, 'round'); eye(g, 22, 14, 'round');
-    rect(g, 19, 18, 21, 18, 'K');
-    for (const x of [15, 20, 25]) line(g, x, 35, x + (x - 20) * 0.3, 38, 1.2, 'D');
-    return { head: [20, 6], back: [27, 24], tail: [30, 32], face: [17, 14] };
+  plant(g, r, f) {
+    // flower monster: a petal ring around a smiling face, leaf arms, a round bulb with roots
+    sym((d, X) => { line(g, X(CX - 5), 52, X(CX - 9), 55, 1.6, 'H'); });
+    ell(g, CX, 45, 11, 8, 'M'); ell(g, CX, 47, 6, 4, 'S');
+    sym((d, X) => poly(g, [[X(CX - 9), 41], [X(CX - 22), 33], [X(CX - 20), 41], [X(CX - 12), 45]], 'M'));
+    const petals = 7 + Math.floor(r() * 3);
+    for (let i = 0; i < petals; i++) { const a = (i / petals) * Math.PI * 2 - Math.PI / 2; ell(g, CX + Math.cos(a) * 12.5, 22 + Math.sin(a) * 12.5, 5.6, 5.6, 'W'); }
+    ell(g, CX, 22, 10.5, 10.5, 'A');
+    sym((d, X) => eye(g, X(CX - 4.5), 20, 0.85, f.eyes, d));
+    mouth(g, CX, 25, 4.4, 4, f.mouth === 'fang' ? 'smile' : f.mouth);
+    sym((d, X) => ell(g, X(CX - 7.5), 25, 1.6, 1, 'T', ['A']));
+    return { top: [CX, 8], eyeY: 20, back: [CX + 12, 12], hand: [CX + 20, 34], s: 1 };
   },
-  imp(g, r) {
-    ell(g, 17, 15, 7, 7, 'M'); ell(g, 19, 26, 5, 6, 'M'); ell(g, 19, 27, 3, 4, 'S');
-    tri(g, 12, 9, 10, 2, 15, 8, 'A'); tri(g, 20, 8, 24, 2, 23, 10, 'A');
-    tri(g, 23, 22, 34, 14, 30, 27, 'S');
-    line(g, 15, 24, 10, 29, 2, 'M'); line(g, 22, 24, 26, 30, 2, 'M');
-    rect(g, 16, 31, 17, 36, 'M'); rect(g, 21, 31, 22, 36, 'M');
-    line(g, 23, 30, 33, 34, 1.4, 'M'); tri(g, 33, 32, 37, 34, 33, 36, 'A');
-    eye(g, 14, 14, r() < 0.6 ? 'angry' : 'round'); eye(g, 19, 14, r() < 0.6 ? 'angry' : 'round');
-    rect(g, 15, 19, 18, 19, 'K'); put(g, 16, 20, 'E');
-    return { head: [17, 7], back: [24, 21], tail: [36, 34], face: [14, 14] };
+  imp(g, r, f) {
+    // little devil: big head, pointed ears and horns, bat wings, a trident, a forked tail
+    sym((d, X) => poly(g, [[X(CX - 6), 32], [X(CX - 22), 20], [X(CX - 20), 27], [X(CX - 24), 29], [X(CX - 19), 34], [X(CX - 21), 38], [X(CX - 8), 40]], 'W'));
+    line(g, CX + 6, 48, CX + 14, 50, 1.6, 'M'); poly(g, [[CX + 13, 47], [CX + 18, 50], [CX + 13, 53]], 'H');
+    ell(g, CX, 41, 8, 8, 'M'); ell(g, CX, 43, 5, 5, 'S');
+    sym((d, X) => { ell(g, X(CX - 4), 50, 3, 2.5, 'M'); });
+    line(g, CX - 16, 52, CX - 16, 22, 1.6, 'H'); poly(g, [[CX - 20, 22], [CX - 12, 22], [CX - 16, 15]], 'H'); poly(g, [[CX - 20, 25], [CX - 20, 18], [CX - 18, 23]], 'H'); poly(g, [[CX - 12, 25], [CX - 12, 18], [CX - 14, 23]], 'H');
+    line(g, CX - 7, 39, CX - 15, 36, 2.6, 'M');
+    sym((d, X) => poly(g, [[X(CX - 9), 20], [X(CX - 19), 15], [X(CX - 11), 26]], 'M'));
+    ell(g, CX, 24, 11, 11, 'M');
+    sym((d, X) => poly(g, [[X(CX - 5), 15], [X(CX - 8), 6], [X(CX - 2), 13]], 'H'));
+    sym((d, X) => eye(g, X(CX - 5), 23, 0.95, f.eyes === 'round' ? 'lid' : f.eyes, d));
+    mouth(g, CX, 28, 5, 4, 'grin');
+    return { top: [CX, 7], eyeY: 23, back: [CX + 10, 14], hand: [CX - 16, 30], s: 1 };
   },
-  ghost(g, r) {
-    ell(g, 20, 18, 11, 12, 'M');
-    rect(g, 9, 18, 31, 31, 'M');
-    for (let x = 9; x <= 31; x++) { const h = 31 + Math.round(Math.sin(x * 0.9) * 2); for (let y = h; y < N; y++) g[y][x] = null; for (let y = 18; y < h; y++) if (!g[y][x]) g[y][x] = 'M'; }
-    ell(g, 7, 21, 3, 2, 'M'); ell(g, 33, 23, 3, 2, 'M');
-    rect(g, 14, 15, 16, 19, 'A'); rect(g, 23, 15, 25, 19, 'A');
-    ell(g, 20, 25, 3, 2, 'K');
-    if (r() < 0.5) for (let i = 0; i < 4; i++) put(g, 12 + i * 5, 10 + (i % 2), 'S');
-    return { head: [20, 5], back: [28, 12], tail: [31, 30], face: [14, 15] };
+  ghost(g, r, f) {
+    // sheet ghost with a big open mouth and a curled tail
+    poly(g, [[CX - 15, 28], [CX + 15, 28], [CX + 12, 42], [CX + 14, 50], [CX + 20, 53], [CX + 10, 54], [CX + 3, 48], [CX - 8, 44]], 'M');
+    ell(g, CX, 25, 15, 15, 'M');
+    sym((d, X) => ell(g, X(CX - 15), 34, 3.6, 2.4, 'M'));
+    sym((d, X) => eye(g, X(CX - 6), 21, 1.05, f.eyes === 'dot' ? 'round' : f.eyes, d));
+    mouth(g, CX, 27, 6, 8, f.mouth === 'grin' ? 'fang' : 'smile');
+    ell(g, CX - 9, 14, 2.4, 3.6, 'G', ['M']);
+    if (f.hat) { poly(g, [[CX - 13, 12], [CX + 13, 12], [CX + 3, -1], [CX - 2, 1]], 'A'); ell(g, CX, 12, 15, 2, 'A'); }
+    return { top: [CX, f.hat ? 0 : 10], eyeY: 21, back: [CX + 12, 16], hand: [CX + 18, 34], s: 1 };
   },
-  golem(g, r) {
-    rect(g, 10, 14, 30, 31, 'M'); rect(g, 13, 5, 26, 14, 'M');
-    rect(g, 4, 15, 9, 29, 'M'); rect(g, 31, 15, 36, 29, 'M');
-    rect(g, 12, 32, 18, 38, 'M'); rect(g, 22, 32, 28, 38, 'M');
-    rect(g, 14, 18, 26, 27, 'S');
-    rect(g, 15, 8, 24, 10, 'K'); rect(g, 16, 9, 18, 9, 'A'); rect(g, 21, 9, 23, 9, 'A');
-    for (let i = 0; i < 4; i++) put(g, 11 + (i * 5) % 18, 15 + (i * 7) % 15, 'D');
-    if (r() < 0.6) { tri(g, 4, 15, 6, 9, 9, 15, 'A'); tri(g, 31, 15, 34, 9, 36, 15, 'A'); }
-    return { head: [19, 2], back: [30, 10], tail: [36, 30], face: [16, 9] };
+  golem(g, r, f) {
+    // brick golem: brick torso and arms, round head, glowing eyes
+    sym((d, X) => { poly(g, [[X(CX - 15.6), 25], [X(CX - 23), 26], [X(CX - 24), 44], [X(CX - 15.6), 44]], 'M'); ell(g, X(CX - 19.8), 46.5, 4.6, 3.2, 'M'); });   // a gap from the torso gives the arms an outline
+    sym((d, X) => { poly(g, [[X(CX - 11), 44], [X(CX - 3), 44], [X(CX - 3), 53], [X(CX - 12), 53]], 'M'); });
+    poly(g, [[CX - 13.5, 22], [CX + 13.5, 22], [CX + 13.5, 46], [CX - 13.5, 46]], 'M');
+    ell(g, CX, 14, 9, 8.5, 'M');
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {      // mortar lines
+      if (g[y][x] !== 'M' || y < 22) continue;
+      const row = Math.floor((y - 22) / 5), off = row % 2 ? 4 : 0;
+      if ((y - 22) % 5 === 0 || (x + off) % 8 === 0) g[y][x] = 'K';
+    }
+    poly(g, [[CX, 28], [CX + 5, 33], [CX, 38], [CX - 5, 33]], 'A');              // a gem set in its chest
+    sym((d, X) => { ell(g, X(CX - 3.6), 13, 2.2, 2.6, 'E'); ell(g, X(CX - 3.4), 13.6, 1.2, 1.6, 'P'); });
+    for (let x = -3; x <= 3; x++) put(g, CX + x, 18.5, 'K');
+    return { top: [CX, 5], eyeY: 14, back: [CX + 12, 22], hand: [CX + 19, 47], s: 1 };
   },
-  dragon(g, r) {
-    tri(g, 20, 20, 34, 2, 36, 18, 'S'); tri(g, 24, 20, 38, 8, 36, 22, 'S');
-    ell(g, 22, 26, 10, 7, 'M'); line(g, 15, 23, 11, 13, 4, 'M'); ell(g, 10, 11, 5, 4, 'M'); ell(g, 5, 13, 3, 2, 'M');
-    ell(g, 21, 29, 7, 3, 'S');
-    line(g, 31, 27, 38, 33, 2.4, 'M'); tri(g, 37, 31, 39, 36, 35, 35, 'A');
-    rect(g, 15, 31, 18, 37, 'M'); rect(g, 25, 31, 28, 37, 'M');
-    tri(g, 8, 8, 6, 2, 11, 7, 'A'); tri(g, 12, 8, 13, 2, 15, 8, 'A');
-    eye(g, 8, 10, 'angry');
-    put(g, 3, 13, 'K');
-    for (let i = 0; i < 4; i++) tri(g, 18 + i * 4, 19, 20 + i * 4, 15, 22 + i * 4, 19, 'A');
-    return { head: [10, 5], back: [24, 18], tail: [38, 32], face: [8, 10] };
+  dragon(g, r, f) {
+    // chubby dragon: bat wings, horned head with snout, scaled belly, claws, tail
+    sym((d, X) => poly(g, [[X(CX - 8), 30], [X(CX - 25), 10], [X(CX - 22), 20], [X(CX - 27), 22], [X(CX - 21), 28], [X(CX - 25), 33], [X(CX - 11), 40]], 'W'));
+    sym((d, X) => { line(g, X(CX - 10), 31, X(CX - 24), 12, 1, 'K'); });
+    line(g, CX + 9, 49, CX + 20, 51, 3, 'M'); poly(g, [[CX + 19, 48], [CX + 25, 51], [CX + 19, 54]], 'H');
+    ell(g, CX, 41, 12, 11, 'M');
+    for (let i = 0; i < 4; i++) ell(g, CX, 35 + i * 4, 6.5 - Math.abs(i - 1.5), 1.6, 'S');
+    sym((d, X) => { ell(g, X(CX - 7), 51, 4, 2.6, 'M'); for (const o of [-1.4, 0, 1.4]) put(g, X(CX - 7 + o), 53, 'H'); ell(g, X(CX - 11), 40, 2.6, 3.4, 'M'); });
+    ell(g, CX, 20, 12, 11, 'M'); ell(g, CX, 27, 8, 5, 'S');
+    sym((d, X) => { poly(g, [[X(CX - 7), 12], [X(CX - 13), 1], [X(CX - 9), 4], [X(CX - 3), 10]], 'H'); ell(g, X(CX - 3), 26, 0.9, 0.9, 'K'); });
+    sym((d, X) => eye(g, X(CX - 6), 18, 0.95, f.eyes === 'dot' ? 'angry' : f.eyes, d));
+    mouth(g, CX, 29, 5, 3.6, f.mouth === 'smile' ? 'grin' : f.mouth);
+    return { top: [CX, 2], eyeY: 18, back: [CX + 9, 9], hand: [CX + 22, 26], s: 1 };
   },
 };
 
 // ------------------------------------------------------------------ type decorations
 const DECOR = {
-  fire(g, p) { const [x, y] = p.head; tri(g, x - 3, y + 2, x, y - 6, x + 3, y + 2, 'A'); tri(g, x - 1, y + 2, x + 1, y - 3, x + 2, y + 2, 'W'); const [tx, ty] = p.tail; tri(g, tx - 2, ty, tx + 1, ty - 6, tx + 2, ty + 1, 'A'); },
-  water(g, p) { const [x, y] = p.back; tri(g, x - 3, y + 2, x + 2, y - 5, x + 4, y + 2, 'S'); },
-  grass(g, p) { const [x, y] = p.head; ell(g, x + 2, y - 2, 3, 1.6, 'A'); line(g, x, y, x + 2, y - 2, 1, 'D'); },
-  electric(g, p) { const [x, y] = p.tail; line(g, x, y, x + 2, y - 3, 1.4, 'A'); line(g, x + 2, y - 3, x - 1, y - 5, 1.4, 'A'); line(g, x - 1, y - 5, x + 2, y - 9, 1.4, 'A'); },
-  ice(g, p) { const [x, y] = p.back; for (let i = -1; i <= 1; i++) tri(g, x + i * 4 - 1, y + 1, x + i * 4, y - 5 + Math.abs(i) * 2, x + i * 4 + 1, y + 1, 'A'); },
-  fight(g, p) { const [x, y] = p.face; rect(g, x - 2, y - 3, x + 9, y - 2, 'A'); line(g, x + 9, y - 3, x + 13, y - 1, 1, 'A'); },
-  poison(g, p) { const [x, y] = p.back; for (let i = 0; i < 4; i++) ell(g, x - 4 + i * 3, y + 4 + (i % 2) * 3, 1, 1, 'A'); },
-  earth(g, p) { const [x, y] = p.back; rect(g, x - 4, y - 1, x - 1, y + 1, 'A'); rect(g, x + 1, y - 2, x + 4, y, 'A'); },
-  wind(g, p) { const [x, y] = p.head; tri(g, x, y + 2, x + 5, y - 5, x + 3, y + 3, 'A'); tri(g, x + 2, y + 3, x + 8, y - 2, x + 5, y + 4, 'S'); },
-  psychic(g, p) { const [x, y] = p.face; ell(g, x + 3, y - 4, 1.4, 1.4, 'A'); put(g, x + 3, y - 4, 'W'); },
-  bug(g, p) { const [x, y] = p.head; line(g, x, y + 2, x - 3, y - 4, 1, 'K'); line(g, x + 2, y + 2, x + 4, y - 4, 1, 'K'); put(g, x - 3, y - 5, 'A'); put(g, x + 4, y - 5, 'A'); },
-  rock(g, p) { const [x, y] = p.back; tri(g, x - 5, y + 2, x - 2, y - 4, x + 1, y + 2, 'A'); tri(g, x, y + 2, x + 3, y - 3, x + 6, y + 2, 'A'); },
-  ghost(g, p) { const [x, y] = p.tail; ell(g, x, y - 2, 2, 2, 'A'); ell(g, x + 2, y - 6, 1.4, 1.4, 'A'); },
-  dragon(g, p) { const [x, y] = p.head; tri(g, x - 3, y + 3, x - 4, y - 4, x - 1, y + 2, 'A'); tri(g, x + 1, y + 2, x + 3, y - 4, x + 3, y + 3, 'A'); },
-  normal(g, p) { const [x, y] = p.head; ell(g, x, y, 3, 2, 'S'); },
+  fire(g, a) { const [x, y] = a.top; poly(g, [[x - 5, y + 4], [x - 1, y - 8], [x + 1, y - 2], [x + 4, y - 10], [x + 6, y + 4]], 'A'); poly(g, [[x - 2, y + 4], [x + 1, y - 3], [x + 3, y + 4]], 'G'); },
+  water(g, a) { const [x, y] = a.back; poly(g, [[x - 3, y + 4], [x + 3, y - 7], [x + 5, y + 4]], 'W', [null]); ell(g, a.hand[0] + 2, a.hand[1] - 9, 2, 2.6, 'A'); },
+  grass(g, a) { const [x, y] = a.top; line(g, x, y + 3, x, y - 2, 1.4, 'K'); ell(g, x - 4, y - 3, 4, 2, 'A'); ell(g, x + 4, y - 4, 4, 2, 'A'); },
+  electric(g, a) { const [x, y] = a.top; poly(g, [[x - 1, y + 3], [x + 4, y - 4], [x + 1, y - 4], [x + 5, y - 11], [x - 2, y - 2], [x + 1, y - 2], [x - 3, y + 3]], 'A'); },
+  ice(g, a) { const [x, y] = a.top; for (const o of [-6, 0, 6]) poly(g, [[x + o - 2.5, y + 4], [x + o, y - 6 + Math.abs(o) / 2], [x + o + 2.5, y + 4]], 'A'); },
+  fight(g, a) { const y = a.eyeY - 6; for (let x = 0; x < N; x++) for (const yy of [y, y + 1, y + 2]) if (g[yy] && g[yy][x] === 'M') g[yy][x] = 'A'; line(g, a.back[0] + 3, y + 1, a.back[0] + 9, y + 5, 2, 'A'); },
+  poison(g, a) { for (const [dx, dy, r] of [[-9, 6, 2], [7, 10, 1.6], [-3, 14, 1.3], [10, 2, 1.2]]) ell(g, CX + dx, a.eyeY + dy, r, r, 'A', ['M']); ell(g, a.hand[0], a.hand[1] - 6, 1.6, 2.4, 'A', [null]); },
+  earth(g, a) { const [x, y] = a.top; poly(g, [[x - 7, y + 5], [x - 5, y - 1], [x - 1, y + 5]], 'A'); poly(g, [[x - 1, y + 5], [x + 2, y - 3], [x + 6, y + 5]], 'A'); },
+  wind(g, a) { const [x, y] = a.top; for (const o of [-3, 0, 3]) poly(g, [[x + o - 1.6, y + 4], [x + o * 2, y - 7 - Math.abs(o) * -0.5], [x + o + 1.6, y + 4]], 'A'); },
+  psychic(g, a) { ell(g, CX, a.eyeY - 6, 2.2, 2.2, 'A'); put(g, CX - 0.5, a.eyeY - 7, 'G'); },
+  bug(g, a) { const [x, y] = a.top; sym((d, X) => { line(g, X(x - 3), y + 4, X(x - 6), y - 4, 1.2, 'K'); ell(g, X(x - 6.5), y - 5, 1.5, 1.5, 'A'); }); },
+  rock(g, a) { for (const [dx, dy] of [[-8, -4], [6, -6], [9, 8]]) { const x = CX + dx, y = a.eyeY + dy - 4; poly(g, [[x - 3, y + 2], [x - 1, y - 2], [x + 3, y - 1], [x + 3, y + 3], [x - 1, y + 4]], 'A', ['M']); } },
+  ghost(g, a) { ell(g, a.hand[0] + 3, a.hand[1] - 12, 2.4, 3, 'A', [null]); ell(g, a.hand[0] + 5, a.hand[1] - 18, 1.6, 2, 'A', [null]); },
+  dragon(g, a) { const [x, y] = a.top; sym((d, X) => poly(g, [[X(x - 4), y + 6], [X(x - 8), y - 3], [X(x - 1), y + 4]], 'H', [null, 'M'])); },
+  normal(g, a) { const [x, y] = a.top; ell(g, x + 1, y + 1, 3, 2, 'S', [null, 'M']); },
 };
 
-// ------------------------------------------------------------------ colours
-const ACCENT = { fire: '#ffd23a', water: '#d8f2ff', grass: '#4ad04a', electric: '#fff24a', ice: '#f0ffff', fight: '#ff3a3a', poison: '#d070ff', earth: '#8a6a3a',
-  wind: '#ffffff', psychic: '#ff4aa0', bug: '#3a3a2a', rock: '#8a8070', ghost: '#e0c0ff', dragon: '#ffe08a', normal: '#fff2d0' };
-const LIGHT = { normal: [28, 64], ice: [55, 72], ghost: [42, 46], dragon: [62, 50], electric: [80, 56], rock: [40, 52], earth: [50, 58], bug: [62, 46] };
+// ------------------------------------------------------------------ colours: each key gets 4 tones (light, base, shade, deep)
+const ACCENT = { fire: [42, 100, 55], water: [200, 90, 80], grass: [110, 70, 48], electric: [52, 100, 58], ice: [190, 80, 88], fight: [0, 80, 52], poison: [285, 70, 62],
+  earth: [32, 45, 42], wind: [0, 0, 96], psychic: [330, 90, 62], bug: [60, 25, 30], rock: [36, 18, 56], ghost: [270, 70, 80], dragon: [45, 90, 66], normal: [40, 60, 85] };
+const TONE = { normal: [30, 62], ice: [55, 74], ghost: [40, 66], dragon: [60, 52], electric: [85, 58], rock: [32, 56], earth: [48, 58], bug: [60, 48], poison: [55, 56], psychic: [70, 64], wind: [55, 66] };
 const hsl = (h, s, l) => `hsl(${((h % 360) + 360) % 360},${Math.max(0, Math.min(100, s))}%,${Math.max(0, Math.min(100, l))}%)`;
+const tones = (h, s, l) => [hsl(h, s, l + 13), hsl(h, s, l), hsl(h + 6, s + 4, l - 12), hsl(h + 10, s + 6, l - 24)];
 export function palette(spId, v) {
-  const s = SPECIES[spId - 1], r = rng(s.seed + 3);
-  const h0 = TYPE_INFO[s.type].hue + (r() - 0.5) * 24;
-  const [sat, lum] = LIGHT[s.type] || [62, 55];
-  const h = h0 + [0, 42, -42, 180, 0][v];
-  return { M: hsl(h, sat, lum), L: hsl(h, sat, lum + 15), D: hsl(h, sat, lum - 14), S: hsl(h + 28, sat - 8, lum + 14), SL: hsl(h + 28, sat - 8, lum + 26), SD: hsl(h + 28, sat - 8, lum + 2),
-    O: hsl(h, sat + 10, 14), A: ACCENT[s.type], E: '#ffffff', P: '#141414', K: hsl(h, 30, 12), W: '#ffffff', rainbow: v === 4, h };
+  const sp = SPECIES[spId - 1], r = rng(sp.seed + 3);
+  const h0 = TYPE_INFO[sp.type].hue + (r() - 0.5) * 22;
+  const [sat, lum] = TONE[sp.type] || [64, 56];
+  const h = h0 + [0, 40, -40, 175, 0][v];
+  const [ah, as, al] = ACCENT[sp.type];
+  return {
+    M: tones(h, sat, lum), S: tones(h + 25, sat * 0.45 + 8, Math.min(86, lum + 26)), W: tones(h - 18, sat + 6, lum - 10),
+    A: tones(ah, as, al), H: tones(42, 40, 86), C: tones(46, 95, 56),
+    E: ['#ffffff', '#ffffff', '#e2e8f0', '#c8d0dc'], P: ['#1a1a2a', '#141420', '#101018', '#0a0a10'], G: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+    R: ['#d8304a', '#b81e36', '#8a1226', '#600818'], T: ['#ff9ab0', '#ff7a98', '#e85a7a', '#c84060'], Y: ['#ffffff', '#ffffff', '#e8e8f0', '#d0d0dc'], K: tones(h, 30, 16),
+    O: hsl(h + 8, 40, 11), rainbow: v === 4, h, sat, lum,
+  };
 }
-export const VARIANT_HUES = (spId) => [0, 1, 2, 3, 4].map((v) => palette(spId, v).M);
+export const VARIANT_HUES = (spId) => [0, 1, 2, 3, 4].map((v) => palette(spId, v).M[1]);
 
+// per-species look: eyes, mouth, extras
+function features(sp, r) {
+  return {
+    eyes: ['round', 'round', 'lid', 'angry', 'dot'][Math.floor(r() * 5)],
+    mouth: ['smile', 'smile', 'fang', 'grin', 'line'][Math.floor(r() * 5)],
+    curl: r() < 0.75, mane: r() < 0.5, spikes: r() < 0.5, hat: sp.type === 'psychic' || r() < 0.15,
+    crown: sp.rank >= 5,
+  };
+}
 function build(spId) {
-  const s = SPECIES[spId - 1], r = rng(s.seed);
+  const sp = SPECIES[spId - 1], r = rng(sp.seed);
   const g = grid();
-  const anchors = BODY[s.body](g, r);
-  DECOR[s.type](g, anchors);
-  // a pattern of its own: spots, stripes or a belly band (same body plan, different look)
-  const pat = Math.floor(r() * 4), ph = Math.floor(r() * 5);
+  const f = features(sp, r);
+  const a = BODY[sp.body](g, r, f);
+  DECOR[sp.type](g, a);
+  if (f.crown) { const x = a.top[0], y = Math.max(7, a.top[1]); poly(g, [[x - 6, y + 3], [x - 6, y - 4], [x - 3, y - 1], [x, y - 6], [x + 3, y - 1], [x + 6, y - 4], [x + 6, y + 3]], 'C'); put(g, x, y - 1, 'A'); }
+  // tones: highlight on the upper-left rim, shade on the lower-right rim, deep shade on the lower part of each part
+  const out = grid(), bbox = {};
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const k = g[y][x]; if (!k) continue; const b = bbox[k] || (bbox[k] = [y, y, x, x]); b[0] = Math.min(b[0], y); b[1] = Math.max(b[1], y); b[2] = Math.min(b[2], x); b[3] = Math.max(b[3], x); }
+  const same = (x, y, k) => g[y] && g[y][x] === k;
+  const shaded = 'MSWAHC';
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    if (g[y][x] !== 'M') continue;
-    if (pat === 1 && (x * 7 + y * 13 + ph) % 23 === 0) { g[y][x] = 'S'; if (g[y][x + 1] === 'M') g[y][x + 1] = 'S'; }
-    if (pat === 2 && (x + ph) % 6 === 0 && y % 2 === 0) g[y][x] = 'D';
-    if (pat === 3 && y === anchors.face[1] + 9 + (ph % 3)) g[y][x] = 'S';
-  }
-  // shading: light where the pixel above-left is empty, dark where below-right is empty
-  const out = grid();
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const c = g[y][x];
-    if (!c) { const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => g[y + dy] && g[y + dy][x + dx]); if (nb) out[y][x] = 'O'; continue; }
-    if (c === 'M' || c === 'S') {
-      const ul = !(g[y - 1] && g[y - 1][x - 1]), dr = !(g[y + 1] && g[y + 1][x + 1]);
-      out[y][x] = c === 'M' ? (ul ? 'L' : dr ? 'D' : 'M') : ul ? 'SL' : dr ? 'SD' : 'S';
-    } else out[y][x] = c;
+    const k = g[y][x];
+    if (!k) { if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => g[y + dy] && g[y + dy][x + dx])) out[y][x] = ['O', 0]; continue; }
+    if (!shaded.includes(k)) { out[y][x] = [k, 1]; continue; }
+    let tone = 1;
+    // light from the upper left: a diagonal gradient across each part, dithered where the tone changes
+    const b = bbox[k], ny = (y - b[0]) / Math.max(1, b[1] - b[0]), nx = (x - b[2]) / Math.max(1, b[3] - b[2]);
+    const t = ny * 0.75 + nx * 0.35, dith = (x + y) % 2 ? 0.05 : -0.05;
+    if (t + dith > 0.8) tone = 2;
+    if (!same(x + 1, y + 1, k) || !same(x + 2, y + 2, k)) tone = Math.min(3, tone + 1);
+    if (!same(x - 1, y - 1, k) && same(x + 1, y + 1, k)) tone = 0;
+    else if (!same(x - 2, y - 2, k) && t < 0.5 && same(x + 1, y + 1, k)) tone = 0;
+    out[y][x] = [k, tone];
   }
   return out;
 }
@@ -202,17 +270,18 @@ export function sprite(spId, v = 0, opts = {}) {
   const cv = document.createElement('canvas'); cv.width = cv.height = N * scale;
   const c = cv.getContext('2d');
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const k = shape[y][x]; if (!k) continue;
-    let col = pal[k] || pal.M;
-    if (opts.shadow) col = k === 'O' ? '#0a0a14' : '#2a2a3a';
-    else if (pal.rainbow && (k === 'M' || k === 'L' || k === 'D')) col = hsl(x * 9 + y * 6, 85, k === 'L' ? 72 : k === 'D' ? 46 : 60);
-    else if (pal.rainbow && k === 'O') col = '#5a3a00';
+    const cell = shape[y][x]; if (!cell) continue;
+    const [k, tone] = cell;
+    let col = k === 'O' ? pal.O : (pal[k] || pal.M)[tone];
+    if (opts.shadow) col = k === 'O' ? '#0a0a14' : '#2c3044';
+    else if (pal.rainbow && k === 'M') col = hsl(y * 7 + x * 3, 88, [76, 62, 50, 40][tone]);
+    else if (pal.rainbow && k === 'O') col = '#4a2a00';
     c.fillStyle = col;
     c.fillRect((opts.flip ? N - 1 - x : x) * scale, y * scale, scale, scale);
   }
-  if (pal.rainbow && !opts.shadow) {           // sparkles
+  if (pal.rainbow && !opts.shadow) {
     c.fillStyle = '#ffffff';
-    for (const [x, y] of [[6, 6], [33, 9], [30, 34]]) { const X = opts.flip ? N - 1 - x : x; c.fillRect(X * scale, (y - 1) * scale, scale, scale * 3); c.fillRect((X - 1) * scale, y * scale, scale * 3, scale); }
+    for (const [x, y] of [[6, 8], [48, 12], [46, 46], [9, 40]]) { const X = opts.flip ? N - 1 - x : x; c.fillRect(X * scale, (y - 1) * scale, scale, scale * 3); c.fillRect((X - 1) * scale, y * scale, scale * 3, scale); }
   }
   cache.set(key, cv);
   return cv;

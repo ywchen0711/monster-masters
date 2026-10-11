@@ -1,9 +1,9 @@
-import { SPECIES, SKILLS, TYPES, TYPE_INFO, AREAS, TAMERS, ITEMS, ITEM, RANKS, STATS, STARTERS, STARTER_LV, STARTER_PLUS, areaPool, eff } from './data.js?v=1';
-import { makeMon, sp, stat, maxHp, heal, expFor, fusionResult, fuse, FUSE_MIN_LV, bestMoves } from './model.js?v=1';
-import { Battle } from './battle.js?v=1';
-import { spriteURL } from './art.js?v=1';
-import { sfx, music } from './audio.js?v=1';
-import { t, L, getLang, setLang, M, STAT_NAME, STATUS_NAME } from './i18n.js?v=1';
+import { SPECIES, SKILLS, TYPES, TYPE_INFO, AREAS, TAMERS, ITEMS, ITEM, RANKS, STATS, STARTERS, STARTER_LV, STARTER_PLUS, areaPool, eff } from './data.js?v=2';
+import { makeMon, sp, stat, maxHp, heal, expFor, fusionResult, fuse, FUSE_MIN_LV, bestMoves } from './model.js?v=2';
+import { Battle } from './battle.js?v=2';
+import { spriteURL } from './art.js?v=2';
+import { sfx, music } from './audio.js?v=2';
+import { t, L, getLang, setLang, M, STAT_NAME, STATUS_NAME } from './i18n.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);

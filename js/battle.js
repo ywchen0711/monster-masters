@@ -1,6 +1,6 @@
 // Turn-based 1-on-1 battle with party switching. Pure logic: step(action) returns a list of events for the UI to play.
-import { SKILLS, eff, ITEM } from './data.js?v=1';
-import { sp, stat, maxHp, catchChance, expYield, gainExp, bestMoves } from './model.js?v=1';
+import { SKILLS, eff, ITEM } from './data.js?v=2';
+import { sp, stat, maxHp, catchChance, expYield, gainExp, bestMoves } from './model.js?v=2';
 
 const STAGE = (n) => (n >= 0 ? (2 + n) / 2 : 2 / (2 - n));
 const STRUGGLE = { id: -1, type: 'none', en: 'Struggle', zh: '掙扎', cat: 'p', power: 40, acc: 0, fx: { recoil: 0.25, stages: [] } };

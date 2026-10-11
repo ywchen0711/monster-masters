@@ -1,5 +1,5 @@
 // Monster instances: stats, experience, learning, capture odds, fusion. Pure logic.
-import { SPECIES, SKILLS, STATS, BODIES, BODY_INFO, TYPES } from './data.js?v=1';
+import { SPECIES, SKILLS, STATS, BODIES, BODY_INFO, TYPES } from './data.js?v=2';
 
 export const sp = (m) => SPECIES[m.sp - 1];
 let uidN = Date.now() % 100000;

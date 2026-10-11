@@ -41,8 +41,8 @@ button.danger { background: #ffe0e0 !important; color: #c0282a; }
 .card:hover { border-color: var(--accent); }
 
 /* town */
-.townScene { height: 110px; border-radius: 18px; background: linear-gradient(#9ad8ff, #c8f0b0 60%, #8ad06a 60%); display: flex; justify-content: center; align-items: flex-end; padding-bottom: 6px; gap: 2px; margin-bottom: 10px; overflow: hidden; }
-.townScene img { width: 60px; height: 60px; animation: bob 1.8s ease-in-out infinite; }
+.townScene { height: 130px; border-radius: 18px; background: linear-gradient(#9ad8ff, #c8f0b0 60%, #8ad06a 60%); display: flex; justify-content: center; align-items: flex-end; padding-bottom: 6px; gap: 2px; margin-bottom: 10px; overflow: hidden; }
+.townScene img { width: 84px; height: 84px; animation: bob 1.8s ease-in-out infinite; }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .tile { border: 0; background: #fff; border-radius: 16px; padding: 10px 2px; font-weight: 900; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px; box-shadow: 0 3px 0 #d8deea; }
 .tile span { font-size: 28px; }
