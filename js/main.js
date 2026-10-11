@@ -14,7 +14,9 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const KEY = 'mm.save.v1';
 const fresh = () => ({ started: false, gold: 500, party: [], box: [], bag: { orb: 5, potion: 3 }, dex: { seen: {}, caught: {} }, tamers: {}, sound: true });
 let save = (() => { try { return { ...fresh(), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { return fresh(); } })();
-const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(save, (k, v) => (k.startsWith('_') ? undefined : v))); } catch (e) { /* private mode */ } };
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(save, (k, v) => (k.startsWith('_') ? undefined : v))); } catch (e) { /* private mode */ } if (cloud) cloud.touch('monster-masters', KEY); };
+// cloud saves (shared by every game on the site); the game keeps working if they are unavailable
+let cloud = null;
 const S = { view: 'title', area: null, battle: null, busy: false, fast: false, ret: 'town' };
 
 // ------------------------------------------------------------------ small helpers
@@ -426,5 +428,12 @@ if (params.has('demo')) {          // screenshots / tests: a ready-made save
   save.bag = { orb: 10, orb2: 3, potion: 5, potion2: 2, revive: 1 };
 }
 go(save.started ? 'town' : 'title');
+import('/save.js').then(async (m) => {
+  cloud = m;
+  if (await m.pull('monster-masters', KEY) && !S.battle && (S.view === 'title' || S.view === 'town')) {
+    try { save = { ...fresh(), ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { /* keep the current save */ }
+    go(save.started ? 'town' : 'title');
+  }
+}).catch(() => {});
 if (params.get('go')) go(params.get('go'), params.get('arg'));
 window.MM = { S, save: () => save, go, startBattle, act, explore, B, makeMon, AREAS, finish };
