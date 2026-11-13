@@ -180,7 +180,7 @@ const VIEWS = {
 function monRow(m, i) {
   const p = hpPct(m), s = sp(m);
   return `<div class="monRow ${m.hp <= 0 ? 'down' : ''}" data-uid="${m.uid}">${img(m.sp, m.v, { cls: 'sm' })}<div class="mi">
-    <span class="tl"><b>${name(m)} ${m.v === 4 ? '<span class="rbw">✦</span>' : ''}</b>${typeChip(s.type)}${rankChip(s.rank)}</span><small>Lv ${m.lv}${m.plus ? ` · +${m.plus}` : ''}${m.status ? ` · ${STATUS_NAME[getLang()][m.status]}` : ''}</small>
+    <span class="tl"><b>${name(m)} ${m.v === 4 ? '<span class="rbw">✦</span>' : ''}</b>${typeChip(s.type)}${rankChip(s.rank)}${m.status && m.hp > 0 ? `<span class="st st-${m.status}">${STATUS_NAME[getLang()][m.status]}</span>` : ''}</span><small>Lv ${m.lv}${m.plus ? ` · +${m.plus}` : ''}</small>
     <span class="hpbar"><i style="width:${p}%;background:${hpColor(p)}"></i></span><small>${m.hp}/${maxHp(m)}</small></div>${i === 0 ? '<span class="lead">★</span>' : ''}</div>`;
 }
 
@@ -287,13 +287,21 @@ async function startBattle(foes, opts) {
   await say(M().go(name(B().me)));
   commands();
 }
+// confusion and stat stages of the monster on the field, as small chips after its type and status
+const STAGE_TAG = { zh: { atk: '攻', def: '防', spa: '特攻', spd: '特防', spe: '速', acc: '命中', crit: '會心' }, en: { atk: 'ATK', def: 'DEF', spa: 'SPA', spd: 'SPD', spe: 'SPE', acc: 'ACC', crit: 'CRT' } };
+function sideTags(st) {
+  if (!st) return ''; const L = getLang() === 'en' ? 'en' : 'zh';
+  let h = st.conf > 0 ? `<span class="st st-cnf">${L === 'en' ? 'CNF' : '混亂'}</span>` : '';
+  for (const [k, v] of Object.entries(st.st || {})) if (v) h += `<span class="st ${v > 0 ? 'st-up' : 'st-dn'}">${STAGE_TAG[L][k]}${v > 0 ? '↑' : '↓'}${Math.abs(v) > 1 ? Math.abs(v) : ''}</span>`;
+  return h;
+}
 function drawSide(side) {
   const m = side === 'p' ? B().me : B().foe, s = sp(m);
   $(side + 'Sprite').innerHTML = img(m.sp, m.v, { flip: side === 'p' });
   $(side + 'Sprite').style.setProperty('--sz', 0.8 + s.rank * 0.07);
   const hp = Math.max(0, disp[side]), p = Math.max(0, (100 * hp) / maxHp(m));
   $(side + 'Info').innerHTML = `<div class="nm"><b>${name(m)}${m.v === 4 ? ' <span class="rbw">✦</span>' : ''}</b><span>Lv ${m.lv}</span></div>
-    <div class="tl">${typeChip(s.type)}${m.status ? `<span class="st st-${m.status}">${STATUS_NAME[getLang()][m.status]}</span>` : ''}${side === 'f' && S.bopts.wild && caught(m.sp) ? '<span class="own">◉</span>' : ''}</div>
+    <div class="tl">${typeChip(s.type)}${m.status ? `<span class="st st-${m.status}">${STATUS_NAME[getLang()][m.status]}</span>` : ''}${sideTags(B().side[side])}${side === 'f' && S.bopts.wild && caught(m.sp) ? '<span class="own">◉</span>' : ''}</div>
     <span class="hpbar"><i style="width:${p}%;background:${hpColor(p)}"></i></span>${side === 'p' ? `<small>${hp}/${maxHp(m)}</small><span class="expbar"><i style="width:${m.lv >= 100 ? 100 : Math.max(0, Math.min(100, (100 * (m.exp - expFor(m.lv))) / (expFor(m.lv + 1) - expFor(m.lv))))}%"></i></span>` : ''}`;
 }
 let sayResolve = null;
@@ -351,7 +359,7 @@ async function act(action) {
 async function play(ev) {
   for (const e of ev) {
     switch (e.t) {
-      case 'msg': { const s = fmtMsg(e); if (s) await say(s); break; }
+      case 'msg': { if (['becameConfused', 'unconfused', 'confused', 'woke', 'thawed'].includes(e.k)) { drawSide('p'); drawSide('f'); } const s = fmtMsg(e); if (s) await say(s); break; }
       case 'use': { const el = $(e.side + 'Sprite'); el.classList.remove('lunge'); void el.offsetWidth; el.classList.add('lunge'); const fx = $(e.side === 'p' ? 'fFx' : 'pFx'); fx.style.setProperty('--c', TYPE_INFO[e.type].color); fx.classList.remove('on'); void fx.offsetWidth; fx.classList.add('on'); await wait(320); break; }
       case 'hit': {
         disp[e.side] = Math.max(0, disp[e.side] - e.n);
@@ -362,7 +370,7 @@ async function play(ev) {
       }
       case 'heal': { const m = e.side === 'p' ? B().me : B().foe; disp[e.side] = Math.min(maxHp(m), disp[e.side] + e.n); if (e.who && e.who.hp === maxHp(e.who)) disp[e.side] = maxHp(m); sfx.play('heal'); pop(e.side, `+${e.n}`, '#7aff9a'); drawSide(e.side); await wait(300); break; }
       case 'status': sfx.play('status'); drawSide(e.side); break;
-      case 'stage': sfx.play('stat'); pop(e.side, e.n > 0 ? '▲' : '▼', e.n > 0 ? '#ff9a5a' : '#6ab0ff'); await wait(200); break;
+      case 'stage': sfx.play('stat'); drawSide(e.side); pop(e.side, e.n > 0 ? '▲' : '▼', e.n > 0 ? '#ff9a5a' : '#6ab0ff'); await wait(200); break;
       case 'faint': { sfx.play('faint'); const el = $(e.side + 'Sprite'); el.classList.add('faint'); await wait(600); break; }
       case 'send': { const el = $(e.side + 'Sprite'); el.className = 'spr enter'; disp[e.side] = e.who.hp; if (e.side === 'f') markSeen(e.who); drawSide(e.side); await wait(350); break; }
       case 'catch': await catchAnim(e); break;
